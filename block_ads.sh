@@ -132,12 +132,22 @@ else
     conditions='"or": ['"$conditions"']'
 fi
 
-json_data='{
-    "name": "'${PREFIX}'",
+# DNS policy
+json_dns='{
+    "name": "'"${PREFIX}"'",
     "conditions": [ { "type": "traffic", "expression": { '"$conditions"' } } ],
     "action": "block",
     "enabled": true,
-    "filters": ["dns", "http"]
+    "filters": ["dns"]
+}'
+
+# HTTP policy
+json_http='{
+    "name": "'"${PREFIX} - HTTP"'",
+    "conditions": [ { "type": "traffic", "expression": { '"$conditions"' } } ],
+    "action": "block",
+    "enabled": true,
+    "filters": ["http"]
 }'
 
 if [[ -z "${policy_id}" || "${policy_id}" == "null" ]]; then
