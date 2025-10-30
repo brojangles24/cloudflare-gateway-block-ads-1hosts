@@ -154,6 +154,43 @@ else
       --data "$json_data" > /dev/null || error "Failed to update policy"
 fi
 
+# === Create or update HTTP blocking policy ===
+HTTP_PREFIX="${PREFIX} - http"
+
+http_policy_id=$(echo "${current_policies}" | jq -r --arg PREFIX "${HTTP_PREFIX}" \
+'.result | map(select(.name == $PREFIX)) | .[0].id')
+
+http_json_data='{
+  "name": "'"${HTTP_PREFIX}"'",
+  "conditions": [
+    {
+      "type": "traffic",
+      "expression": {
+        '"$conditions"'
+      }
+    }
+  ],
+  "action": "block",
+  "enabled": true,
+  "filters": ["http"]
+}'
+
+if [[ -z "${http_policy_id}" || "${http_policy_id}" == "null" ]]; then
+  echo "Creating HTTP policy..."
+  curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X POST \
+  "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data "$http_json_data" > /dev/null || error "Failed to create HTTP policy"
+else
+  echo "Updating HTTP policy ${http_policy_id}..."
+  curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X PUT \
+  "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules/${http_policy_id}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data "$http_json_data" > /dev/null || error "Failed to update HTTP policy"
+fi
+
 # === Delete excess lists ===
 for list_id in "${excess_list_ids[@]}"; do
     echo "Deleting list ${list_id}..."
