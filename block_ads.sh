@@ -114,54 +114,60 @@ for file in "${chunked_lists[@]}"; do
     list_counter=$((list_counter + 1))
 done
 
-# === Create or update blocking policy ===
-policy_id=$(echo "${current_policies}" | jq -r --arg PREFIX "${PREFIX}" \
-  '.result | map(select(.name == $PREFIX)) | .[0].id') || error "Failed to get policy ID"
-
-conditions=()
+# === Build condition block ===
 if [[ ${#used_list_ids[@]} -eq 1 ]]; then
-    conditions='
-        "any": { "in": { "lhs": { "splat": "dns.domains" }, "rhs": "$'"${used_list_ids[0]}"'" } }'
+    conditions='"any": { "in": { "lhs": { "splat": "dns.domains" }, "rhs": "'"${used_list_ids[0]}"'" } }'
 else
-    for list_id in "${used_list_ids[@]}"; do
-        conditions+=('{
-            "any": { "in": { "lhs": { "splat": "dns.domains" }, "rhs": "$'"$list_id"'" } }
-        }')
-    done
-    conditions=$(IFS=','; echo "${conditions[*]}")
-    conditions='"or": ['"$conditions"']'
+    conditions='"or": ['$(for id in "${used_list_ids[@]}"; do echo "{\"any\":{\"in\":{\"lhs\":{\"splat\":\"dns.domains\"},\"rhs\":\"$id\"}}},"; done | sed 's/,$//')']'
 fi
 
-# DNS policy
+# === Policies JSON ===
 json_dns='{
-    "name": "'"${PREFIX}"'",
-    "conditions": [ { "type": "traffic", "expression": { '"$conditions"' } } ],
-    "action": "block",
-    "enabled": true,
-    "filters": ["dns"]
+  "name": "'"${PREFIX}"'",
+  "conditions": [ { "type": "traffic", "expression": { '"$conditions"' } } ],
+  "action": "block",
+  "enabled": true,
+  "filters": ["dns"]
 }'
 
-# HTTP policy
 json_http='{
-    "name": "'"${PREFIX} - HTTP"'",
-    "conditions": [ { "type": "traffic", "expression": { '"$conditions"' } } ],
-    "action": "block",
-    "enabled": true,
-    "filters": ["http"]
+  "name": "'"${PREFIX} - HTTP"'",
+  "conditions": [ { "type": "traffic", "expression": { '"$conditions"' } } ],
+  "action": "block",
+  "enabled": true,
+  "filters": ["http"]
 }'
 
-if [[ -z "${policy_id}" || "${policy_id}" == "null" ]]; then
-    echo "Creating policy..."
-    curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X POST \
+# === Create/update DNS rule ===
+dns_id=$(echo "$current_policies" | jq -r --arg PREFIX "$PREFIX" '.result | map(select(.name==$PREFIX)) | .[0].id')
+if [[ -z "$dns_id" || "$dns_id" == "null" ]]; then
+    echo "Creating DNS policy..."
+    curl -sSfL -X POST \
       "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules" \
       -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
-      --data "$json_data" > /dev/null || error "Failed to create policy"
+      --data "$json_dns" > /dev/null || error "Failed to create DNS policy"
 else
-    echo "Updating policy ${policy_id}..."
-    curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X PUT \
-      "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules/${policy_id}" \
+    echo "Updating DNS policy..."
+    curl -sSfL -X PUT \
+      "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules/${dns_id}" \
       -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
-      --data "$json_data" > /dev/null || error "Failed to update policy"
+      --data "$json_dns" > /dev/null || error "Failed to update DNS policy"
+fi
+
+# === Create/update HTTP rule ===
+http_id=$(echo "$current_policies" | jq -r --arg PREFIX "$PREFIX - HTTP" '.result | map(select(.name==$PREFIX)) | .[0].id')
+if [[ -z "$http_id" || "$http_id" == "null" ]]; then
+    echo "Creating HTTP policy..."
+    curl -sSfL -X POST \
+      "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules" \
+      -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
+      --data "$json_http" > /dev/null || error "Failed to create HTTP policy"
+else
+    echo "Updating HTTP policy..."
+    curl -sSfL -X PUT \
+      "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules/${http_id}" \
+      -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
+      --data "$json_http" > /dev/null || error "Failed to update HTTP policy"
 fi
 
 # === Delete excess lists ===
