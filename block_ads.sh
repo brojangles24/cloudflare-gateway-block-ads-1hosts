@@ -137,7 +137,7 @@ json_data='{
     "conditions": [ { "type": "traffic", "expression": { '"$conditions"' } } ],
     "action": "block",
     "enabled": true,
-    "filters": ["dns"]
+    "filters": ["dns", "http"]
 }'
 
 if [[ -z "${policy_id}" || "${policy_id}" == "null" ]]; then
