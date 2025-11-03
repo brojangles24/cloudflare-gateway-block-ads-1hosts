@@ -1,6 +1,7 @@
 name: Block ads update
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '0 * * * *'
   push:
@@ -10,6 +11,7 @@ on:
 jobs:
   block_ads_update:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
