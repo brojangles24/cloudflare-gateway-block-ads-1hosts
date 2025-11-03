@@ -9,25 +9,25 @@ MAX_RETRIES=10
 
 error() {
     echo "Error: $1"
-    rm -f oisd_big.domains.txt.*
+    rm -f oisd_big_domainswild2.txt.*
     exit 1
 }
 
 silent_error() {
     echo "Silent error: $1"
-    rm -f oisd_big.domains.txt.*
+    rm -f oisd_big_domainswild2.txt.*
     exit 0
 }
 
-echo "Downloading oisd_big.domains.txt..."
+echo "Downloading oisd_big_domainswild2.txt..."
 curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors \
   https://raw.githubusercontent.com/sjhgvr/oisd/main/domainswild2_big.txt \
-  | grep -vE '^\s*(#|$)' > oisd_big.domains.txt || silent_error "Failed to download domains list"
+  | grep -vE '^\s*(#|$)' > oisd_big_domainswild2.txt || silent_error "Failed to download domains list"
 
-git diff --exit-code oisd_big.domains.txt > /dev/null && silent_error "No changes detected"
-[[ -s oisd_big.domains.txt ]] || error "Downloaded list is empty"
+git diff --exit-code oisd_big_domainswild2.txt > /dev/null && silent_error "No changes detected"
+[[ -s oisd_big_domainswild2.txt ]] || error "Downloaded list is empty"
 
-total_lines=$(wc -l < oisd_big.domains.txt)
+total_lines=$(wc -l < oisd_big_domainswild2.txt)
 (( total_lines <= MAX_LIST_SIZE * MAX_LISTS )) || error "Too many domains for Cloudflare"
 
 total_lists=$(( (total_lines + MAX_LIST_SIZE - 1) / MAX_LIST_SIZE ))
@@ -58,8 +58,8 @@ current_lists=$(curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X GET \
 
 current_lists_filtered=$(echo "$current_lists" | jq -r --arg PREFIX "${PREFIX}" '.result | map(select(.name | contains($PREFIX))) | .[].id')
 
-split -l ${MAX_LIST_SIZE} oisd_big.domains.txt oisd_big.domains.txt. || error "Split failed"
-chunked_lists=($(ls oisd_big.domains.txt.*))
+split -l ${MAX_LIST_SIZE} oisd_big_domainswild2.txt oisd_big_domainswild2.txt. || error "Split failed"
+chunked_lists=($(ls oisd_big_domainswild2.txt.*))
 
 used_list_ids=()
 excess_list_ids=()
@@ -132,6 +132,6 @@ done
 
 git config --global user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
 git config --global user.name "$(gh api /users/${GITHUB_ACTOR} | jq .name -r)"
-git add oisd_big.domains.txt || exit 0
+git add oisd_big_domainswild2.txt || exit 0
 git commit -m "Update oisd_big list" || exit 0
 git push origin main
