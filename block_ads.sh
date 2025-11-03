@@ -58,11 +58,12 @@ update_rule() {
     "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/gateway/rules" \
     -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json")
 
-  expr=$(echo "$policy" | jq -r --arg PREFIX "$PREFIX" \
+  expr=$(echo "$policy" | jq --arg PREFIX "$PREFIX" \
     '.result|map(select(.name==$PREFIX))|.[0].conditions[0].expression')
-
-  new_expr=$(jq -n --argjson old "$expr" --arg id "$list_id" \
-    '{or: [$old, {any:{in:{lhs:{splat:"dns.domains"},rhs:$id}}}]}')
+  
+  new_expr=$(jq -n --argjson old "$expr" --arg id "$list_id" '
+    { or: [ $old, { any: { in: { lhs: { splat: "dns.domains" }, rhs: $id } } } ] }
+  ')
 
   json_data=$(jq -n --arg PREFIX "$PREFIX" --argjson EX "$new_expr" \
     '{name:$PREFIX,conditions:[{type:"traffic",expression:$EX}],action:"block",enabled:true,filters:["dns"]}')
