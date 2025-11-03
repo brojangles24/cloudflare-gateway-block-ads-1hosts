@@ -7,6 +7,8 @@ PREFIX="Block ads"
 MAX_LIST_SIZE=1000
 MAX_LISTS=300
 MAX_RETRIES=10
+TARGET_BRANCH="${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}"
+[[ -n "${TARGET_BRANCH}" ]] || TARGET_BRANCH="main"
 
 # Define error function
 function error() {
@@ -256,4 +258,4 @@ git config --global user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply
 git config --global user.name "$(gh api /users/${GITHUB_ACTOR} | jq .name -r)"
 git add oisd_big_domainswild2.txt || error "Failed to add the domains list to repo"
 git commit -m "Update domains list" --author=. || error "Failed to commit the domains list to repo"
-git push origin main || error "Failed to push the domains list to repo"
+git push origin "${TARGET_BRANCH}" || error "Failed to push the domains list to repo"
