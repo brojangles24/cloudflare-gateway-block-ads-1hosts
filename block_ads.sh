@@ -174,18 +174,18 @@ if [[ ${#used_list_ids[@]} -eq 1 ]]; then
         "any": {
             "in": {
                 "lhs": { "splat": "dns.domains" },
-                "rhs": $id
+                "rhs": ("$" + $id)
             }
         }
     }')
 else
-    ids_json=$(printf '%s\n' "${used_list_ids[@]}" | jq -R '.' | jq -s '.')
+    ids_json=$(printf '%s\n' "${used_list_ids[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
     expression_json=$(jq -n --argjson ids "$ids_json" '{
         "or": ($ids | map({
             "any": {
                 "in": {
                     "lhs": { "splat": "dns.domains" },
-                    "rhs": .
+                    "rhs": ("$" + .)
                 }
             }
         }))
