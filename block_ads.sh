@@ -113,10 +113,21 @@ for file in "${chunked_lists[@]}"; do
 done
 
 ### BUILD POLICY EXPRESSION
-expr='{"or":[]}'
-for id in "${used_list_ids[@]}"; do
-    expr=$(echo "$expr" | jq --arg id "$id" '.or += [{any:{in:{lhs:{splat:"dns.domains"},rhs:$id}}}]')
+chunk_size=100
+expr='{"or": []}'
+
+for ((i=0; i<${#used_list_ids[@]}; i+=chunk_size)); do
+    chunk=( "${used_list_ids[@]:i:chunk_size}" )
+
+    subexpr='{"or": []}'
+    for id in "${chunk[@]}"; do
+        subexpr=$(echo "$subexpr" | jq --arg id "$id" \
+          '.or += [{any:{in:{lhs:{splat:"dns.domains"},rhs:$id}}}]')
+    done
+
+    expr=$(echo "$expr" | jq --argjson s "$subexpr" '.or += [$s]')
 done
+
 
 json_data=$(jq -n --arg PREFIX "$PREFIX" --argjson EX "$expr" \
   '{name:$PREFIX,conditions:[{type:"traffic",expression:$EX}],action:"block",enabled:true,filters:["dns"]}')
@@ -138,7 +149,7 @@ fi
 ### REMOVE UNUSED LISTS
 for list_id in "${excess_list_ids[@]}"; do
     echo "Deleting unused list $list_id"
-    curl -sSfL -X DELETE \
+    curl -sSfL -X DELETE I am running a few minutes late; my previous meeting is running over.
       "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/gateway/lists/$list_id" \
       -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" > /dev/null
 done
