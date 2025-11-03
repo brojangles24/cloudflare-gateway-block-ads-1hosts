@@ -24,6 +24,19 @@ function silent_error() {
     exit 0
 }
 
+# Ensure the local checkout is up to date with the remote target branch before
+# making any changes so the subsequent commit can fast-forward cleanly.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if git remote get-url origin >/dev/null 2>&1; then
+        if git ls-remote --exit-code --heads origin "${TARGET_BRANCH}" >/dev/null 2>&1; then
+            git fetch origin "${TARGET_BRANCH}" || error "Failed to fetch ${TARGET_BRANCH} from origin"
+            git checkout -B "${TARGET_BRANCH}" "origin/${TARGET_BRANCH}" || error "Failed to sync local ${TARGET_BRANCH} with origin"
+        else
+            git checkout -B "${TARGET_BRANCH}" || error "Failed to ensure local ${TARGET_BRANCH} exists"
+        fi
+    fi
+fi
+
 # Download the latest domains list
 curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://big.oisd.nl/domainswild2 | grep -vE '^\s*(#|$)' > oisd_big_domainswild2.txt || silent_error "Failed to download the domains list"
 
@@ -99,22 +112,25 @@ if [[ ${current_lists_count} -gt 0 ]]; then
         -H "Content-Type: application/json") || error "Failed to get list ${list_id} contents"
 
         # Create list item values for removal
-        list_items_values=$(echo "${list_items}" | jq -r '.result | map(.value) | map(select(. != null))')
+        list_items_values=$(echo "${list_items}" | jq '.result | map(.value) | map(select(. != null))')
 
         # Create list item array for appending from first chunked list
         list_items_array=$(jq -R -s 'split("\n") | map(select(length > 0) | { "value": . })' "${chunked_lists[0]}")
 
-        # Create payload
-        payload=$(jq -n --argjson append_items "$list_items_array" --argjson remove_items "$list_items_values" '{
+        # Create payload file
+        payload_file=$(mktemp) || error "Failed to create temporary file for list payload"
+        jq -n --argjson append_items "$list_items_array" --argjson remove_items "$list_items_values" '{
             "append": $append_items,
             "remove": $remove_items
-        }')
+        }' > "${payload_file}"
 
-        # Patch list
-        list=$(curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X PATCH "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists/${list_id}" \
+        # Patch list with payload file to avoid oversized command invocations
+        curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X PATCH "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists/${list_id}" \
         -H "Authorization: Bearer ${API_TOKEN}" \
         -H "Content-Type: application/json" \
-        --data "$payload") || error "Failed to patch list ${list_id}"
+        --data "@${payload_file}" > /dev/null || { rm -f "${payload_file}"; error "Failed to patch list ${list_id}"; }
+
+        rm -f "${payload_file}"
 
         # Store the list ID
         used_list_ids+=("${list_id}")
@@ -135,18 +151,22 @@ for file in "${chunked_lists[@]}"; do
     # Format list counter
     formatted_counter=$(printf "%03d" "$list_counter")
 
-    # Create payload
-    payload=$(jq -n --arg PREFIX "${PREFIX} - ${formatted_counter}" --argjson items "$(jq -R -s 'split("\n") | map(select(length > 0) | { "value": . })' "${file}")" '{
+    # Create payload file
+    items_json=$(jq -R -s 'split("\n") | map(select(length > 0) | { "value": . })' "${file}")
+    payload_file=$(mktemp) || error "Failed to create temporary file for list payload"
+    jq -n --arg PREFIX "${PREFIX} - ${formatted_counter}" --argjson items "$items_json" '{
         "name": $PREFIX,
         "type": "DOMAIN",
         "items": $items
-    }')
+    }' > "${payload_file}"
 
     # Create list
     list=$(curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X POST "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists" \
         -H "Authorization: Bearer ${API_TOKEN}" \
         -H "Content-Type: application/json" \
-        --data "$payload") || error "Failed to create list"
+        --data "@${payload_file}") || { rm -f "${payload_file}"; error "Failed to create list"; }
+
+    rm -f "${payload_file}"
 
     # Store the list ID
     used_list_ids+=("$(echo "${list}" | jq -r '.result.id')")
@@ -161,71 +181,63 @@ done
 # Ensure policy called exactly $PREFIX exists, else create it
 policy_id=$(echo "${current_policies}" | jq -r --arg PREFIX "${PREFIX}" '.result | map(select(.name == $PREFIX)) | .[0].id') || error "Failed to get policy ID"
 
-# Initialize an empty array to store conditions
-conditions=()
-
-# Loop through the used_list_ids and build the "conditions" array dynamically
-[[ ${#used_list_ids[@]} -eq 1 ]] && {
-    conditions='
-                "any": {
-                    "in": {
-                        "lhs": {
-                            "splat": "dns.domains"
-                        },
-                        "rhs": "$'"${used_list_ids[0]}"'"
-                    }
-                }'
-} || {
-    for list_id in "${used_list_ids[@]}"; do
-        conditions+=('{
-                "any": {
-                    "in": {
-                        "lhs": {
-                            "splat": "dns.domains"
-                        },
-                        "rhs": "$'"$list_id"'"
-                    }
-                }
-        }')
-    done
-    conditions=$(IFS=','; echo "${conditions[*]}")
-    conditions='"or": ['"$conditions"']'
-}
-
-# Create the JSON data dynamically
-json_data='{
-    "name": "'${PREFIX}'",
-    "conditions": [
-        {
-            "type":"traffic",
-            "expression":{
-                '"$conditions"'
+# Loop through the used_list_ids and build the policy expression dynamically
+if [[ ${#used_list_ids[@]} -eq 1 ]]; then
+    expression_json=$(jq -n --arg id "${used_list_ids[0]}" '{
+        "any": {
+            "in": {
+                "lhs": { "splat": "dns.domains" },
+                "rhs": ("$" + $id)
             }
         }
+    }')
+else
+    ids_json=$(printf '%s\n' "${used_list_ids[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+    expression_json=$(jq -n --argjson ids "$ids_json" '{
+        "or": ($ids | map({
+            "any": {
+                "in": {
+                    "lhs": { "splat": "dns.domains" },
+                    "rhs": ("$" + .)
+                }
+            }
+        }))
+    }')
+fi
+
+# Create the JSON data dynamically in a temporary file
+policy_file=$(mktemp) || error "Failed to create temporary file for policy payload"
+jq -n --arg name "${PREFIX}" --argjson expression "$expression_json" '{
+    "name": $name,
+    "conditions": [
+        {
+            "type": "traffic",
+            "expression": $expression
+        }
     ],
-    "action":"block",
-    "enabled":true,
-    "description":"",
-    "rule_settings":{
-        "block_page_enabled":false,
-        "block_reason":"",
+    "action": "block",
+    "enabled": true,
+    "description": "",
+    "rule_settings": {
+        "block_page_enabled": false,
+        "block_reason": "",
         "biso_admin_controls": {
-            "dcp":false,
-            "dcr":false,
-            "dd":false,
-            "dk":false,
-            "dp":false,
-            "du":false
+            "dcp": false,
+            "dcr": false,
+            "dd": false,
+            "dk": false,
+            "dp": false,
+            "du": false
         },
-        "add_headers":{},
-        "ip_categories":false,
-        "override_host":"",
-        "override_ips":null,
-        "l4override":null,
-        "check_session":null
+        "add_headers": {},
+        "ip_categories": false,
+        "override_host": "",
+        "override_ips": null,
+        "l4override": null,
+        "check_session": null
     },
-    "filters":["dns"]
-}'
+    "filters": ["dns"]
+}' > "${policy_file}"
 
 [[ -z "${policy_id}" || "${policy_id}" == "null" ]] &&
 {
@@ -234,7 +246,7 @@ json_data='{
     curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X POST "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules" \
         -H "Authorization: Bearer ${API_TOKEN}" \
         -H "Content-Type: application/json" \
-        --data "$json_data" > /dev/null || error "Failed to create policy"
+        --data "@${policy_file}" > /dev/null || { rm -f "${policy_file}"; error "Failed to create policy"; }
 } ||
 {
     # Update the policy
@@ -242,8 +254,10 @@ json_data='{
     curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X PUT "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/rules/${policy_id}" \
         -H "Authorization: Bearer ${API_TOKEN}" \
         -H "Content-Type: application/json" \
-        --data "$json_data" > /dev/null || error "Failed to update policy"
+        --data "@${policy_file}" > /dev/null || { rm -f "${policy_file}"; error "Failed to update policy"; }
 }
+
+rm -f "${policy_file}"
 
 # Delete excess lists in $excess_list_ids
 for list_id in "${excess_list_ids[@]}"; do
@@ -258,4 +272,7 @@ git config --global user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply
 git config --global user.name "$(gh api /users/${GITHUB_ACTOR} | jq .name -r)"
 git add oisd_big_domainswild2.txt || error "Failed to add the domains list to repo"
 git commit -m "Update domains list" --author=. || error "Failed to commit the domains list to repo"
+if git remote get-url origin >/dev/null 2>&1 && git ls-remote --exit-code --heads origin "${TARGET_BRANCH}" >/dev/null 2>&1; then
+    git pull --rebase origin "${TARGET_BRANCH}" || error "Failed to rebase onto the latest ${TARGET_BRANCH}"
+fi
 git push origin "${TARGET_BRANCH}" || error "Failed to push the domains list to repo"
