@@ -40,4 +40,3 @@ for list_id in $(echo "${current_lists}" | jq -r --arg PREFIX "${PREFIX}" '.resu
     curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X DELETE "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists/${list_id}" \
         -H "Authorization: Bearer ${API_TOKEN}" \
         -H "Content-Type: application/json" > /dev/null || error "Failed to delete list ${list_id}"
-done
