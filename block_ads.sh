@@ -106,20 +106,29 @@ if [[ ${current_lists_count} -gt 0 ]]; then
 
         echo "Updating list ${list_id}..."
 
-        # Create list item array for replacing the current list contents with the latest chunk
+        # Get list contents
+        list_items=$(curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X GET "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists/${list_id}/items?limit=${MAX_LIST_SIZE}" \
+        -H "Authorization: Bearer ${API_TOKEN}" \
+        -H "Content-Type: application/json") || error "Failed to get list ${list_id} contents"
+
+        # Create list item values for removal
+        list_items_values=$(echo "${list_items}" | jq '.result | map(.value) | map(select(. != null))')
+
+        # Create list item array for appending from first chunked list
         list_items_array=$(jq -R -s 'split("\n") | map(select(length > 0) | { "value": . })' "${chunked_lists[0]}")
 
         # Create payload file
         payload_file=$(mktemp) || error "Failed to create temporary file for list payload"
-        jq -n --argjson items "$list_items_array" '{
-            "items": $items
+        jq -n --argjson append_items "$list_items_array" --argjson remove_items "$list_items_values" '{
+            "append": $append_items,
+            "remove": $remove_items
         }' > "${payload_file}"
 
-        # Replace the list items in a single call to avoid oversized PATCH payloads
-        curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X PUT "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists/${list_id}/items" \
+        # Patch list with payload file to avoid oversized command invocations
+        curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X PATCH "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists/${list_id}" \
         -H "Authorization: Bearer ${API_TOKEN}" \
         -H "Content-Type: application/json" \
-        --data "@${payload_file}" > /dev/null || { rm -f "${payload_file}"; error "Failed to replace items for list ${list_id}"; }
+        --data "@${payload_file}" > /dev/null || { rm -f "${payload_file}"; error "Failed to patch list ${list_id}"; }
 
         rm -f "${payload_file}"
 
