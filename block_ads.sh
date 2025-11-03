@@ -113,7 +113,7 @@ for file in "${chunked_lists[@]}"; do
 done
 
 ### BUILD POLICY EXPRESSION
-chunk_size=100
+chunk_size=1
 expr='{"or": []}'
 
 for ((i=0; i<${#used_list_ids[@]}; i+=chunk_size)); do
