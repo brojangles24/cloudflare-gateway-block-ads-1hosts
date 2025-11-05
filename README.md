@@ -1,4 +1,4 @@
-#Cloudflare Gateway Block Ads
+Cloudflare Gateway ZeroTrust Ad Block
 
 Forked from jacobgelling/cloudflare-gateway-block-ads.
 This version uses the HaGeZi Ultimate blocklist by default. It will automatically download the blocklist, split it into chunks, upload the chunks as Cloudflare Domains lists, and apply a Gateway policy to block them.
