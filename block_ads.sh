@@ -38,7 +38,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 # Download the latest domains list
-curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://raw.githubusercontent.com/hagezi/dns-blocklists/refs/heads/main/wildcard/ultimate-onlydomains.txt | grep -vE '^\s*(#|$)' > HaGeZi_Ultimate_domains.txt || silent_error "Failed to download the domains list"
+curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro-onlydomains.txt | grep -vE '^\s*(#|$)' > HaGeZi_Ultimate_domains.txt || silent_error "Failed to download the domains list"
 
 # Check if the file has changed
 git diff --exit-code HaGeZi_Ultimate_domains.txt > /dev/null && silent_error "The domains list has not changed"
