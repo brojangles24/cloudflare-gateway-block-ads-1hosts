@@ -4,8 +4,8 @@
 API_TOKEN="$API_TOKEN"
 ACCOUNT_ID="$ACCOUNT_ID"
 PREFIX="Block ads"
-MAX_LIST_SIZE=1000
-MAX_LISTS=1000
+MAX_LIST_SIZE=1001
+MAX_LISTS=300
 MAX_RETRIES=10
 TARGET_BRANCH="${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}"
 [[ -n "${TARGET_BRANCH}" ]] || TARGET_BRANCH="main"
@@ -38,7 +38,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 # Download the latest domains list
-curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://raw.githubusercontent.com/badmojr/1Hosts/refs/heads/master/Xtra/domains.wildcards | grep -vE '^\s*(#|$)' > HaGeZi_Ultimate_domains.txt || silent_error "Failed to download the domains list"
+curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/ultimate-onlydomains.txt | grep -vE '^\s*(#|$)' > HaGeZi_Ultimate_domains.txt || silent_error "Failed to download the domains list"
 
 # Check if the file has changed
 git diff --exit-code HaGeZi_Ultimate_domains.txt > /dev/null && silent_error "The domains list has not changed"
