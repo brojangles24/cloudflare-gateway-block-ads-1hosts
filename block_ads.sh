@@ -1,8 +1,19 @@
 #!/bin/bash
 
+# Exit immediately if a command exits with a non-zero status.
+set -e
+# Treat unset variables as an error.
+set -u
+# The return value of a pipeline is the status of the last command to exit with a non-zero status.
+set -o pipefail
+
+echo "Starting Cloudflare blocklist update..."
+
+# --- Cloudflare Configuration ---
 # Replace these variables with your actual Cloudflare API token and account ID
-API_TOKEN="$API_TOKEN"
-ACCOUNT_ID="$ACCOUNT_ID"
+# You should set these as GitHub Secrets in your repository settings
+API_TOKEN="${API_TOKEN:-YOUR_API_TOKEN_SECRET}"
+ACCOUNT_ID="${ACCOUNT_ID:-YOUR_ACCOUNT_ID_SECRET}"
 PREFIX="Block ads"
 MAX_LIST_SIZE=1000
 MAX_LISTS=300
@@ -10,22 +21,37 @@ MAX_RETRIES=10
 TARGET_BRANCH="${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}"
 [[ -n "${TARGET_BRANCH}" ]] || TARGET_BRANCH="main"
 
-# Define error function
+# --- Aggregator Configuration ---
+LIST_URLS=(
+    "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/ultimate-onlydomains.txt" # Hagezi Ultimate
+    "https://raw.githubusercontent.com/badmojr/1Hosts/master/Lite/domains.wildcards"                                       # 1Hosts Lite
+)
+
+# Output file. We use the name the Cloudflare script expects.
+OUTPUT_FILE="HaGeZi_Ultimate_domains.txt"
+
+# Temporary directory to store downloaded lists
+TEMP_DIR=$(mktemp -d)
+echo "Using temporary directory: $TEMP_DIR"
+
+
+# --- Helper Functions ---
 function error() {
     echo "Error: $1"
-    rm -f HaGeZi_Ultimate_domains.txt.*
+    rm -rf "$TEMP_DIR"
+    rm -f ${OUTPUT_FILE}.*
     exit 1
 }
 
-# Define silent error function
 function silent_error() {
     echo "Silent error: $1"
-    rm -f HaGeZi_Ultimate_domains.txt.*
+    rm -rf "$TEMP_DIR"
+    rm -f ${OUTPUT_FILE}.*
     exit 0
 }
 
-# Ensure the local checkout is up to date with the remote target branch before
-# making any changes so the subsequent commit can fast-forward cleanly.
+# --- Git Sync ---
+# Ensure the local checkout is up to date
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if git remote get-url origin >/dev/null 2>&1; then
         if git ls-remote --exit-code --heads origin "${TARGET_BRANCH}" >/dev/null 2>&1; then
@@ -37,24 +63,48 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     fi
 fi
 
-# Download the latest domains list
-curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/ultimate-onlydomains.txt | grep -vE '^\s*(#|$)' > HaGeZi_Ultimate_domains.txt || silent_error "Failed to download the domains list"
+# --- 1. Aggregation Step ---
+echo "Downloading ${#LIST_URLS[@]} lists in parallel..."
+for i in "${!LIST_URLS[@]}"; do
+    curl -L -sS -o "$TEMP_DIR/list_$i.txt" "${LIST_URLS[$i]}" &
+done
+wait
+echo "All lists downloaded."
+
+echo "Processing, normalizing, and deduplicating domains..."
+cat "$TEMP_DIR"/list_*.txt | \
+    grep -vE '^\s*#|^\s*$' | \
+    awk '{if (NF >= 2) print $2; else print $1}' | \
+    grep -vE '^(localhost|127.0.0.1|0.0.0.0|::1)$' | \
+    tr '[:upper:]' '[:lower:]' | \
+    sed 's/\r$//' | \
+    sort -u \
+    > "$OUTPUT_FILE"
+
+echo "Processing complete. Aggregated list saved to $OUTPUT_FILE."
+rm -rf "$TEMP_DIR"
+echo "Temporary download directory cleaned up."
+
+
+# --- 2. Cloudflare Upload Step ---
 
 # Check if the file has changed
-git diff --exit-code HaGeZi_Ultimate_domains.txt > /dev/null && silent_error "The domains list has not changed"
+git diff --exit-code "$OUTPUT_FILE" > /dev/null && silent_error "The aggregated domains list has not changed"
 
 # Ensure the file is not empty
-[[ -s HaGeZi_Ultimate_domains.txt ]] || error "The domains list is empty"
+[[ -s "$OUTPUT_FILE" ]] || error "The aggregated domains list is empty"
 
 # Calculate the number of lines in the file
-total_lines=$(wc -l < HaGeZi_Ultimate_domains.txt)
+total_lines=$(wc -l < "$OUTPUT_FILE")
+echo "Total unique domains aggregated: $total_lines"
 
-# Ensure the file is not over the maximum allowed lines
+# Ensure the file is not over the maximum allowed lines (300k limit)
 (( total_lines <= MAX_LIST_SIZE * MAX_LISTS )) || error "The domains list has more than $((MAX_LIST_SIZE * MAX_LISTS)) lines"
 
 # Calculate the number of lists required
 total_lists=$((total_lines / MAX_LIST_SIZE))
 [[ $((total_lines % MAX_LIST_SIZE)) -ne 0 ]] && total_lists=$((total_lists + 1))
+echo "This will require $total_lists Cloudflare lists."
 
 # Get current lists from Cloudflare
 current_lists=$(curl -sSfL --retry "$MAX_RETRIES" --retry-all-errors -X GET "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists" \
@@ -76,11 +126,11 @@ current_lists_count_without_prefix=$(echo "${current_lists}" | jq -r --arg PREFI
 [[ ${total_lists} -le $((MAX_LISTS - current_lists_count_without_prefix)) ]] || error "The number of lists required (${total_lists}) is greater than the maximum allowed (${MAX_LISTS - current_lists_count_without_prefix})"
 
 # Split lists into chunks of $MAX_LIST_SIZE
-split -l ${MAX_LIST_SIZE} HaGeZi_Ultimate_domains.txt HaGeZi_Ultimate_domains.txt. || error "Failed to split the domains list"
+split -l ${MAX_LIST_SIZE} "$OUTPUT_FILE" "${OUTPUT_FILE}." || error "Failed to split the domains list"
 
 # Create array of chunked lists
 chunked_lists=()
-for file in HaGeZi_Ultimate_domains.txt.*; do
+for file in ${OUTPUT_FILE}.*; do
     chunked_lists+=("${file}")
 done
 
@@ -267,12 +317,20 @@ for list_id in "${excess_list_ids[@]}"; do
         -H "Content-Type: application/json" > /dev/null || error "Failed to delete list ${list_id}"
 done
 
-# Add, commit and push the file
+# --- 3. Git Commit Step ---
+echo "Configuring Git user..."
 git config --global user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
 git config --global user.name "$(gh api /users/${GITHUB_ACTOR} | jq .name -r)"
-git add HaGeZi_Ultimate_domains.txt || error "Failed to add the domains list to repo"
-git commit -m "Update domains list" --author=. || error "Failed to commit the domains list to repo"
+
+echo "Committing and pushing updated list..."
+git add "$OUTPUT_FILE" || error "Failed to add the domains list to repo"
+git commit -m "Update domains list ($total_lines domains)" --author=. || error "Failed to commit the domains list to repo"
 if git remote get-url origin >/dev/null 2>&1 && git ls-remote --exit-code --heads origin "${TARGET_BRANCH}" >/dev/null 2>&1; then
     git pull --rebase origin "${TARGET_BRANCH}" || error "Failed to rebase onto the latest ${TARGET_BRANCH}"
 fi
 git push origin "${TARGET_BRANCH}" || error "Failed to push the domains list to repo"
+
+echo "================================================"
+echo "Aggregation and Cloudflare upload finished!"
+echo "Total unique domains: $total_lines"
+echo "================================================"
