@@ -5,8 +5,8 @@
 <p align="center">
 <!-- IMPORTANT: You will need to replace 'YOUR_USERNAME/YOUR_REPONAME' with your actual GitHub username and repository name for these badges to work! -->
 <!-- For example: brojangles24/cloudflare-gateway-block-ads-Aggregated -->
-<img alt="GitHub last commit" src="https://www.google.com/search?q=https://img.shields.io/github/last-commit/YOUR_USERNAME/YOUR_REPONAME">
-<img alt="GitHub Workflow Status" src="https://www.google.com/search?q=https://img.shields.io/github/actions/workflow/status/YOUR_USERNAME/YOUR_REPONAME/aggregate-lists.yml%3Fbranch%3Dmain%26label%3DList%2520Build%26logo%3Dgithub">
+<img alt="GitHub last commit" src="https://www.google.com/search?q=https://img.shields.io/github/last-commit/brojangles24/cloudflare-gateway-block-ads-Aggregated">
+<img alt="GitHub Workflow Status" src="https://www.google.com/search?q=https://img.shields.io/github/actions/workflow/status/brojangles24/cloudflare-gateway-block-ads-Aggregated/aggregate-lists.yml%3Fbranch%3Dmain%26label%3DList%2520Build%26logo%3Dgithub">
 </p>
 
 This version acts as a powerful list aggregator. By default, it combines the Hagezi Ultimate list, 1Hosts Lite, and OISD Small, deduplicates them, and then syncs the final, combined list to your Cloudflare Gateway.
