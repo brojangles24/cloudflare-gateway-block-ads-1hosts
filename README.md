@@ -1,5 +1,5 @@
 <p align="center">
-<img src="[https://www.google.com/search?q=https://placehold.co/800x200/4F46E5/FFFFFF%3Ftext%3DCloudflare%2BGateway%2BAggregator%26font%3Dinter](https://www.google.com/url?sa=i&url=https%3A%2F%2Fmymodernmet.com%2Fnasa-black-hole-visualization%2F&psig=AOvVaw03GLROA8i7_1V_-udGYyM3&ust=1763654067566000&source=images&cd=vfe&opi=89978449&ved=0CBUQjRxqFwoTCKi2hsXJ_pADFQAAAAAdAAAAABAE)" alt="Cloudflare Gateway Aggregator Banner"/>
+<img src="https://mymodernmet.com/wp/wp-content/uploads/2019/10/nasa-black-hole-visualization-1.gif" alt="Cloudflare Gateway Aggregator Banner"/>
 </p>
 
 <p align="center">
