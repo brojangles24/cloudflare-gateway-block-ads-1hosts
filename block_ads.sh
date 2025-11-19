@@ -28,7 +28,7 @@ LIST_URLS=(
 )
 
 # Output file. We use the name the Cloudflare script expects.
-OUTPUT_FILE="HaGeZi_Ultimate_domains.txt"
+OUTPUT_FILE="Aggregated_List.txt"
 
 # Temporary directory to store downloaded lists
 TEMP_DIR=$(mktemp -d)
